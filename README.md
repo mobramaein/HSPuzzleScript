@@ -1,2 +1,1 @@
-# HSPuzzleScript
-A Haskell Interpreter for PuzzleScript 
+# HASKELL TIME FUN TIME!
