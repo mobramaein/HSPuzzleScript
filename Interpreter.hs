@@ -28,10 +28,27 @@ data WinCondition = WinC LogicWord GameObject LogicWord GameObject | WinCS Logic
 --A level is a simple list of strings that will be parsed after getting the tokens from the legend. '.' is a reserved character for the background.
 data Level = Level [String] 
 --A state can be defined as the list of the current state of all game objects
-data State = State [StateGO] 
 
 --Take a state game object and an input and return a new temporary state with different coordinates 
+
+--Utility functions to convert directions to input integers and vice versa
+intToDir :: Int -> Direction 
+intToDir i  = if i == 0 then NoDir 
+				else if i == 1 then Relative Lft
+				else if i == 2 then Relative Rgt
+				else if i == 3 then Relative Down 
+				else Relative Up
+
+dirToInt :: Direction -> Int 
+dirToInt d = if d == NoDir then 0 
+				else if d == Relative Lft then 1
+				else if d == Relative Rgt then 2
+				else if d == Relative Down then 3 
+				else 4 
+
+
 updateCoord :: StateGO -> Int -> String 
+updateCoord s 0 = "No movement Needed"
 updateCoord s i = if i == 1 then "Going Left" 
 				else if i == 2 then "Going Right" 
 				else if i == 3 then "Going Down"
@@ -43,9 +60,13 @@ checkCollision :: StateGO -> StateGO -> Bool
 checkCollision s1 s2 =  if (s1 == s2) then True else False 
 
 -- Loop should go like this, update the coord by applying the input, then check for collisions against everything in the state but you. apply rules on every collision. Some will be null. 
-applyRuleOnce :: StateGO -> State -> Int -> Rule -> String 
-applyRuleOnce s s0 i r = updateCoord s i
-main :: IO() 
+applyRuleOnce :: [StateGO] -> Int -> Rule -> String 
+applyRuleOnce [] i r = "There are no gameObjects in this game, why?" 
+applyRuleOnce (x:xs) i r = updateCoord x i ++ applyRuleOnce xs i r 
+
+applyRules :: [StateGO] -> Int -> [Rule] -> String
+applyRules s i [] = "No Rules Here, Move along"
+applyRules s i (x:xs) = applyRuleOnce s i x ++ applyRules s i xs
 main = 	
 		let
 		--Game Object merges the Legend and the graphics in one simplified object. 
@@ -64,9 +85,10 @@ main =
 		--Lets load a level for this game 
 		l1 = ["#########","#.......#","#.....T.#","#.P.*.C.#","#.......#","#.......#","#########"]
 		inputs = [1,2,4,3,2,1,3,4,3,3]
-		state = State [wallS,playerS,crateS]
+		state = [playerS,wallS,crateS]
+		ruleset = [r1]
 		in
 		do
 		print $ wallS
-		print $ applyRuleOnce playerS state 1 r1
+		print $ applyRules state 1 ruleset
 
