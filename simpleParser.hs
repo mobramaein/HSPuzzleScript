@@ -8,12 +8,12 @@ import Control.Monad.Error
 import Data.IORef
 
 -- IO Types --
-type Env = IORef [(String, IORef LispVal)]
+type Env = IORef [(String, IORef PzlVal)]
 
 nullEnv :: IO Env
 nullEnv = newIORef []
 
-type IOThrowsError = ErrorT LispError IO
+type IOThrowsError = ErrorT PzlError IO
 
 -- IO Helpers --
 
@@ -27,20 +27,20 @@ runIOThrows action = runErrorT (trapError action) >>= return . extractValue
 isBound :: Env -> String -> IO Bool
 isBound envRef var = readIORef envRef >>= return . maybe False (const True) . lookup var
 
-getVar :: Env -> String -> IOThrowsError LispVal
+getVar :: Env -> String -> IOThrowsError PzlVal
 getVar envRef var = do env <- liftIO $ readIORef envRef
                        maybe (throwError $ UnboundVar "Getting an unbound variable" var)
                              (liftIO . readIORef)
                              (lookup var env)
 
-setVar :: Env -> String -> LispVal -> IOThrowsError LispVal
+setVar :: Env -> String -> PzlVal -> IOThrowsError PzlVal
 setVar envRef var value = do env <- liftIO $ readIORef envRef
                              maybe (throwError $ UnboundVar "Setting an unbound variable" var)
                                    (liftIO . (flip writeIORef value))
                                    (lookup var env)
                              return value
 
-defineVar :: Env -> String -> LispVal -> IOThrowsError LispVal
+defineVar :: Env -> String -> PzlVal -> IOThrowsError PzlVal
 defineVar envRef var value = do
     alreadyDefined <- liftIO $ isBound envRef var
     if alreadyDefined
@@ -51,33 +51,58 @@ defineVar envRef var value = do
              writeIORef envRef ((var, valueRef) : env)
              return value
 
-bindVars :: Env -> [(String, LispVal)] -> IO Env
+bindVars :: Env -> [(String, PzlVal)] -> IO Env
 bindVars envRef bindings = readIORef envRef >>= extendEnv bindings >>= newIORef
     where extendEnv bindings env = liftM (++ env) (mapM addBinding bindings)
           addBinding (var, value) = do ref <- newIORef value
                                        return (var, ref)
 
--- Scheme DataTypes --
+-- Pzl Datatypes --
 
-data LispVal = Atom String
-            | List [LispVal]
-            | DottedList [LispVal] LispVal
+
+data KeywordVal = Keyword String
+                | Direction String
+                | LogicWord String
+instance Show KeywordVal where show = showKeyword
+
+showKeyword :: KeywordVal -> String
+showKeyword (Keyword w) = w
+showKeyword (Direction d) = d
+showKeyword (LogicWord l) = l
+
+data PatternVal = Pattern KeywordVal PzlVal KeywordVal PzlVal
+-- instance Show PatternVal where show = showPattern
+
+-- showPattern :: PatternVal -> String
+
+data PzlVal = GameObject String -- TODO: A lot
+            | Rule PatternVal PatternVal
+            | WinCondition KeywordVal PzlVal KeywordVal PzlVal
+            | Level [String]
+            | Func { params :: [String], vararg :: (Maybe String),
+                     body :: [PzlVal], closure :: Env }
+            | IOFunc ([PzlVal] -> IOThrowsError PzlVal)
+            | Port Handle
+            | Atom String
+            | List [PzlVal]
+            | DottedList [PzlVal] PzlVal
             | Number Integer
             | String String
             | Bool Bool
-            | PrimitiveFunc ([LispVal] -> ThrowsError LispVal)
-            | Func { params :: [String], vararg :: (Maybe String),
-                     body :: [LispVal], closure :: Env }
-            | IOFunc ([LispVal] -> IOThrowsError LispVal)
-            | Port Handle
-instance Show LispVal where show = showVal
+            | PrimitiveFunc ([PzlVal] -> ThrowsError PzlVal)
+instance Show PzlVal where show = showVal
 
-showVal :: LispVal -> String
+showVal :: PzlVal -> String
 showVal (String contents) = "\"" ++ contents ++ "\""
 showVal (Atom name) = name
 showVal (Number contents) = show contents
 showVal (Bool True) = "#t"
 showVal (Bool False) = "#f"
+showVal (Port _) = "<IO port>"
+showVal (IOFunc _) = "<IO primitive"
+showVal (GameObject name) = name
+-- showVal (Rule logic preC postC) = logic ++ preC ++ postC
+-- showVal (WinCondition logic1 obj1 logic2 obj2) = logic1 ++ obj1 ++ logic2 ++ obj2
 showVal (PrimitiveFunc _ ) = "<primitive>"
 showVal (Func {params = args, vararg = varargs, body = body, closure = env}) =
   "(lambda (" ++ unwords (map show args) ++
@@ -86,28 +111,26 @@ showVal (Func {params = args, vararg = varargs, body = body, closure = env}) =
       Just arg -> " . " ++ arg) ++ ") ...)"
 showVal (List contents) = "(" ++ unwordsList contents ++ ")"
 showVal (DottedList head tail) = "(" ++ unwordsList head ++ " . " ++ showVal tail ++ ")"
-showVal (Port _) = "<IO port>"
-showVal (IOFunc _) = "<IO primitive"
 
-unwordsList :: [LispVal] -> String
+unwordsList :: [PzlVal] -> String
 unwordsList = unwords . map showVal
 
-data LispError = NumArgs Integer [LispVal]
-                | TypeMismatch String LispVal
+data PzlError = NumArgs Integer [PzlVal]
+                | TypeMismatch String PzlVal
                 | Parser ParseError
-                | BadSpecialForm String LispVal
+                | BadSpecialForm String PzlVal
                 | NotFunction String String
                 | UnboundVar String String
                 | Default String
-instance Show LispError where show = showError
+instance Show PzlError where show = showError
 
-instance Error LispError where
+instance Error PzlError where
         noMsg = Default "An error has occurred"
         strMsg = Default
 
-type ThrowsError = Either LispError
+type ThrowsError = Either PzlError
 
-showError :: LispError -> String
+showError :: PzlError -> String
 showError (UnboundVar message varname)  = message ++ ": " ++ varname
 showError (BadSpecialForm message form) = message ++ ": " ++ show form
 showError (NotFunction message func)    = message ++ ": " ++ show func
@@ -122,7 +145,7 @@ trapError action = catchError action (return . show)
 extractValue :: ThrowsError a -> a
 extractValue (Right val) = val
 
-data Unpacker = forall a. Eq a => AnyUnpacker (LispVal -> ThrowsError a)
+data Unpacker = forall a. Eq a => AnyUnpacker (PzlVal -> ThrowsError a)
 
 -- IO Helpers --
 
@@ -154,7 +177,7 @@ runOne args = do
     >>= hPutStrLn stderr
 
 runRepl :: IO ()
-runRepl = primitiveBindings >>= until_ (== "quit") (readPrompt "Lisp>>> ") . evalAndPrint
+runRepl = primitiveBindings >>= until_ (== "quit") (readPrompt "Pzl>>> ") . evalAndPrint
 
 -- Parsing --
 
@@ -164,14 +187,14 @@ symbol = oneOf "!#$%&|*+-/:<==>?@^_~"
 spaces :: Parser ()
 spaces = skipMany1 space
 
-parseString :: Parser LispVal
+parseString :: Parser PzlVal
 parseString = do
                 char '"'
                 x <- many (noneOf "\"")
                 char '"'
                 return $ String x
 
-parseAtom :: Parser LispVal
+parseAtom :: Parser PzlVal
 parseAtom = do
             first <- letter <|> symbol
             rest <- many (letter <|> digit <|> symbol)
@@ -181,26 +204,51 @@ parseAtom = do
                         "#f" -> Bool False
                         _    -> Atom atom
 
-parseNumber :: Parser LispVal
+parseNumber :: Parser PzlVal
 parseNumber = liftM (Number . read) $ many1 digit
 
-parseList :: Parser LispVal
+parseList :: Parser PzlVal
 parseList = liftM List $ sepBy parseExpr spaces
 
-parseDottedList :: Parser LispVal
+parseDottedList :: Parser PzlVal
 parseDottedList = do
     head <- endBy parseExpr spaces
     tail <- char '.' >> spaces >> parseExpr
     return $ DottedList head tail
 
-parseQuoted :: Parser LispVal
+parseQuoted :: Parser PzlVal
 parseQuoted = do
     char '\''
     x <- parseExpr
     return $ List [Atom "quote", x]
 
-parseExpr :: Parser LispVal
+-- Stupid Version --
+parseRule :: Parser PzlVal
+parseRule = do
+    char '['
+    keyW1 <- many (noneOf " ")
+    char ' '
+    let dir1 = Direction keyW1
+    char ' '
+    obj1 <- many (noneOf " ")
+    let obVal1 = GameObject obj1
+    char '|'
+    keyW2 <- many (noneOf " ")
+    char ' '
+    let dir2 = Direction keyW2
+    char ' '
+    obj2 <- many (noneOf " ")
+    let obVal2 = GameObject obj2
+    char ']'
+    let preC = Pattern dir1 obVal1 dir2 obVal2
+
+    let rule = Rule preC preC
+    return rule
+
+
+parseExpr :: Parser PzlVal
 parseExpr = parseAtom
+        <|> parseRule
         <|> parseString
         <|> parseNumber
         <|> parseQuoted
@@ -209,7 +257,7 @@ parseExpr = parseAtom
                char ')'
                return x
 -- File IO --
-ioPrimitives :: [(String, [LispVal] -> IOThrowsError LispVal)]
+ioPrimitives :: [(String, [PzlVal] -> IOThrowsError PzlVal)]
 ioPrimitives = [("apply", applyProc),
                 ("open-input-file", makePort ReadMode),
                 ("open-output-file", makePort WriteMode),
@@ -219,40 +267,40 @@ ioPrimitives = [("apply", applyProc),
                 ("read-contents", readContents),
                 ("read-all", readAll)]
 
-applyProc :: [LispVal] -> IOThrowsError LispVal
+applyProc :: [PzlVal] -> IOThrowsError PzlVal
 applyProc [func, List args] = apply func args
 applyProc (func : args)     = apply func args
 
-makePort :: IOMode -> [LispVal] -> IOThrowsError LispVal
+makePort :: IOMode -> [PzlVal] -> IOThrowsError PzlVal
 makePort mode [String filename] = liftM Port $ liftIO $ openFile filename mode
 
-closePort :: [LispVal] -> IOThrowsError LispVal
+closePort :: [PzlVal] -> IOThrowsError PzlVal
 closePort [Port port] = liftIO $ hClose port >> (return $ Bool True)
 closePort _           = return $ Bool False
 
-readProc :: [LispVal] -> IOThrowsError LispVal
+readProc :: [PzlVal] -> IOThrowsError PzlVal
 readProc []          = readProc [Port stdin]
 -- liftIO and liftThrows convert readExpr and hGetLine to the IOThrowsError monad
 readProc [Port port] = (liftIO $ hGetLine port) >>= liftThrows . readExpr
 
-writeProc :: [LispVal] -> IOThrowsError LispVal
+writeProc :: [PzlVal] -> IOThrowsError PzlVal
 writeProc [obj]           = writeProc [obj, Port stdout]
 writeProc [obj, Port port] = liftIO $ hPrint port obj >> (return $ Bool True)
 
-readContents :: [LispVal] -> IOThrowsError LispVal
+readContents :: [PzlVal] -> IOThrowsError PzlVal
 readContents [String filename] = liftM String $ liftIO $ readFile filename
 
-load :: String -> IOThrowsError [LispVal]
+load :: String -> IOThrowsError [PzlVal]
 load filename = (liftIO $ readFile filename) >>= liftThrows . readExprList
 
 -- Loads, and wraps result in a list
-readAll :: [LispVal] -> IOThrowsError LispVal
+readAll :: [PzlVal] -> IOThrowsError PzlVal
 readAll [String filename] = liftM  List $ load filename
 
 
 -- Primitives --
 
-primitives :: [(String, [LispVal] -> ThrowsError LispVal)]
+primitives :: [(String, [PzlVal] -> ThrowsError PzlVal)]
 primitives = [("+", numericBinop (+)),
               ("-", numericBinop (-)),
               ("*", numericBinop (*)),
@@ -285,12 +333,12 @@ primitiveBindings = nullEnv >>= (flip bindVars $ map (makeFunc IOFunc) ioPrimiti
                                              ++ map (makeFunc PrimitiveFunc) primitives)
       where makeFunc constructor (var, func) = (var, constructor func)
 
-numericBinop :: (Integer -> Integer -> Integer) -> [LispVal] -> ThrowsError LispVal
+numericBinop :: (Integer -> Integer -> Integer) -> [PzlVal] -> ThrowsError PzlVal
 numericBinop op           []  = throwError $ NumArgs 2 []
 numericBinop op singleVal@[_] = throwError $ NumArgs 2 singleVal
 numericBinop op params        = mapM unpackNum params >>= return . Number . foldl1 op
 
-boolBinop :: (LispVal -> ThrowsError a) -> (a -> a -> Bool) -> [LispVal] -> ThrowsError LispVal
+boolBinop :: (PzlVal -> ThrowsError a) -> (a -> a -> Bool) -> [PzlVal] -> ThrowsError PzlVal
 boolBinop unpacker op args = if length args /= 2
                             then throwError $ NumArgs 2 args
                             else do left <- unpacker $ args !! 0
@@ -301,17 +349,17 @@ numBoolBinop  = boolBinop unpackNum
 strBoolBinop  = boolBinop unpackStr
 boolBoolBinop = boolBinop unpackBool
 
-unpackStr :: LispVal -> ThrowsError String
+unpackStr :: PzlVal -> ThrowsError String
 unpackStr (String s) = return s
 unpackStr (Number s) = return $ show s
 unpackStr (Bool s)   = return $ show s
 unpackStr notString  = throwError $ TypeMismatch "string" notString
 
-unpackBool :: LispVal -> ThrowsError Bool
+unpackBool :: PzlVal -> ThrowsError Bool
 unpackBool (Bool b) = return b
 unpackBool notBool  = throwError $ TypeMismatch "boolean" notBool
 
-unpackNum :: LispVal -> ThrowsError Integer
+unpackNum :: PzlVal -> ThrowsError Integer
 unpackNum (Number n) = return n
 unpackNum (String n) = let parsed = reads n in
                         if null parsed
@@ -320,7 +368,7 @@ unpackNum (String n) = let parsed = reads n in
 unpackNum (List [n]) = unpackNum n
 unpackNum notNum     = throwError $ TypeMismatch " number" notNum
 
-unpackEquals :: LispVal -> LispVal -> Unpacker -> ThrowsError Bool
+unpackEquals :: PzlVal -> PzlVal -> Unpacker -> ThrowsError Bool
 unpackEquals arg1 arg2 (AnyUnpacker unpacker) =
             do unpacked1 <- unpacker arg1
                unpacked2 <- unpacker arg2
@@ -329,27 +377,27 @@ unpackEquals arg1 arg2 (AnyUnpacker unpacker) =
 
 -- List Primitives --
 
-car :: [LispVal] -> ThrowsError LispVal
+car :: [PzlVal] -> ThrowsError PzlVal
 car [List (x : xs)]         = return x
 car [DottedList (x : xs) _] = return x
 car [badArg]                = throwError $ TypeMismatch "pair" badArg
 car badArgList              = throwError $ NumArgs 1 badArgList
 
-cdr :: [LispVal] -> ThrowsError LispVal
+cdr :: [PzlVal] -> ThrowsError PzlVal
 cdr [List (x : xs)]         = return $ List xs
 cdr [DottedList [_] x]      = return x
 cdr [DottedList (_ : xs) x] = return $ DottedList xs x
 cdr [badArg]                = throwError $ TypeMismatch "pair" badArg
 cdr badArgList              = throwError $ NumArgs 1 badArgList
 
-cons :: [LispVal] -> ThrowsError LispVal
+cons :: [PzlVal] -> ThrowsError PzlVal
 cons [x1, List []] = return $ List [x1]
 cons [x, List xs] = return $ List $ x : xs
 cons [x, DottedList xs xlast] = return $ DottedList (x : xs) xlast
 cons [x1, x2] = return $ DottedList [x1] x2
 cons badArgList = throwError $ NumArgs 2 badArgList
 
-eqv :: [LispVal] -> ThrowsError LispVal
+eqv :: [PzlVal] -> ThrowsError PzlVal
 eqv [(Bool arg1), (Bool arg2)]             = return $ Bool $ arg1 == arg2
 eqv [(Number arg1), (Number arg2)]         = return $ Bool $ arg1 == arg2
 eqv [(String arg1), (String arg2)]         = return $ Bool $ arg1 == arg2
@@ -364,7 +412,7 @@ eqv [(List arg1), (List arg2)]             = return $ Bool $ (length arg1 == len
 eqv [_, _]                                 = return $ Bool False
 eqv badArgList                             = throwError $ NumArgs 2 badArgList
 
-equal :: [LispVal] -> ThrowsError LispVal
+equal :: [PzlVal] -> ThrowsError PzlVal
 equal [arg1, arg2] = do
     primitiveEquals <- liftM or $ mapM (unpackEquals arg1 arg2)
                         [AnyUnpacker unpackNum, AnyUnpacker unpackStr, AnyUnpacker unpackBool]
@@ -374,7 +422,7 @@ equal badArgList = throwError $ NumArgs 2 badArgList
 
 -- Eval/Apply --
 
-eval :: Env -> LispVal -> IOThrowsError LispVal
+eval :: Env -> PzlVal -> IOThrowsError PzlVal
 eval env val@(String _) = return val
 eval env val@(Number _) = return val
 eval env val@(Bool _) = return val
@@ -417,7 +465,7 @@ eval env (List (function : args)) = do
 
 eval env badForm = throwError $ BadSpecialForm "Unrecognized Special Form" badForm
 
-apply :: LispVal -> [LispVal] -> IOThrowsError LispVal
+apply :: PzlVal -> [PzlVal] -> IOThrowsError PzlVal
 apply (PrimitiveFunc func) args = liftThrows $ func args
 -- for user defined funcs..wtF?
 apply (Func params varargs body closure) args =
@@ -439,7 +487,7 @@ makeVarArgs = makeFunc . Just . showVal
 -- Main --
 
 readOrThrow :: Parser a -> String -> ThrowsError a
-readOrThrow parser input = case parse parser "lisp" input of
+readOrThrow parser input = case parse parser "pzl" input of
    Left err -> throwError $ Parser err
    Right val -> return val
 

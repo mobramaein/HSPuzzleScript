@@ -10,30 +10,30 @@ data CommandWords = Sfx0 |Sfx1 |Sfx2 |Sfx3 |Sfx4 |Sfx5 |Sfx6 |Sfx7 |Sfx8 |Sfx9 |
 
 -- Internal Data Types --
 
---String for name, list of Strings for Sprite -  
+--String for name, list of Strings for Sprite -
 data GameObject = GameObj String [String] deriving (Eq,Show)
 
 --This is the type for a game rule--
-data Rule = Obj String | 
+data Rule = Obj String |
 			Prec Direction Rule Direction Rule |
 			Post Direction Rule Direction Rule |
-			GameRule RuleKeyWord Rule Rule 
+			GameRule RuleKeyWord Rule Rule
 			deriving (Eq,Show)
 
---This is the type for a Winning condition- 
---There are games with no winning conditions. 
+--This is the type for a Winning condition-
+--There are games with no winning conditions.
 data WinCondition = WinC LogicWord GameObject LogicWord GameObject | WinCS LogicWord GameObject deriving(Eq,Show)
 
---This is found in the legend section. 
+--This is found in the legend section.
 -- Format is $CHAR$ = {ObjectRef}
 data LevelTokens = LevelToke String GameObject
 
 data State = Stat [GameObject]
-evalRule :: State -> Rule -> State 
-evalRule 	
+evalRule :: State -> Rule -> State
+evalRule
 
-main :: IO() 
-main = 	
+main :: IO()
+main =
 		let
 		player = Obj "Player"
 		trail =  Obj "Trail"
